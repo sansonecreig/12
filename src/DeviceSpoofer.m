@@ -227,7 +227,7 @@ static int custom_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, 
     
     DeviceSpoofer *spoofer = [DeviceSpoofer shared];
     if (name[1] == HW_MACHINE || name[1] == HW_MODEL) {
-        NSString *fake = spoofer.fakeMachine;
+        NSString *fake = [spoofer fakeMachine];
         size_t fakeLen = fake.length + 1;
         if (oldlenp && oldp && *oldlenp >= fakeLen) {
             memset(oldp, 0, *oldlenp);
@@ -235,13 +235,13 @@ static int custom_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, 
             *oldlenp = fakeLen;
         } else if (oldlenp) *oldlenp = fakeLen;
     } else if (name[1] == HW_MEMSIZE) {
-        uint64_t fakeMem = spoofer.fakeMemory;
+        uint64_t fakeMem = [spoofer fakeMemory];
         if (oldlenp && oldp && *oldlenp >= sizeof(uint64_t)) {
             memcpy(oldp, &fakeMem, sizeof(uint64_t));
             *oldlenp = sizeof(uint64_t);
         }
     } else if (name[1] == HW_NCPU || name[1] == 3 || name[1] == 7) {
-        int fakeCpu = (int)spoofer.fakeCPUCount;
+        int fakeCpu = (int)[spoofer fakeCPUCount];
         if (oldlenp && oldp && *oldlenp >= sizeof(int)) {
             memcpy(oldp, &fakeCpu, sizeof(int));
             *oldlenp = sizeof(int);
@@ -255,20 +255,20 @@ static CFTypeRef custom_IORegistryEntryCreateCFProperty(mach_port_t entry, CFStr
     NSString *key = (__bridge NSString *)property;
     DeviceSpoofer *spoofer = [DeviceSpoofer shared];
     if ([key isEqualToString:@"board-id"]) {
-        return CFBridgingRetain(spoofer.fakeBoardID);
+        return CFBridgingRetain([spoofer fakeBoardID]);
     }
     if ([key isEqualToString:@"chip-id"]) {
-        NSDictionary *info = spoofer.deviceInfoForModel(spoofer.fakeMachine);
+        NSDictionary *info = [spoofer deviceInfoForModel:[spoofer fakeMachine]];
         NSString *chipID = info[@"chipID"];
         unsigned int val = 0;
         [[NSScanner scannerWithString:chipID] scanHexInt:&val];
         return CFBridgingRetain([NSData dataWithBytes:&val length:sizeof(val)]);
     }
     if ([key isEqualToString:@"IOPlatformSerialNumber"]) {
-        return CFBridgingRetain(spoofer.fakeSerialNumber);
+        return CFBridgingRetain([spoofer fakeSerialNumber]);
     }
     if ([key isEqualToString:@"IOPlatformUUID"]) {
-        return CFBridgingRetain(spoofer.fakeHardwareUUID);
+        return CFBridgingRetain([spoofer fakeHardwareUUID]);
     }
     return orig_IORegistryEntryCreateCFProperty(entry, property, allocator, options);
 }
@@ -277,17 +277,17 @@ static CFTypeRef custom_IORegistryEntryCreateCFProperty(mach_port_t entry, CFStr
 static void* custom_MGCopyAnswer(CFStringRef property) {
     NSString *key = (__bridge NSString *)property;
     DeviceSpoofer *spoofer = [DeviceSpoofer shared];
-    if ([key isEqualToString:@"SerialNumber"]) return (__bridge void *)spoofer.fakeSerialNumber;
-    if ([key isEqualToString:@"MLBSerialNumber"]) return (__bridge void *)spoofer.fakeMLBSerial;
+    if ([key isEqualToString:@"SerialNumber"]) return (__bridge void *)[spoofer fakeSerialNumber];
+    if ([key isEqualToString:@"MLBSerialNumber"]) return (__bridge void *)[spoofer fakeMLBSerial];
     if ([key isEqualToString:@"UniqueDeviceID"] || [key isEqualToString:@"UniqueChipID"])
-        return (__bridge void *)spoofer.fakeSerialNumber;
+        return (__bridge void *)[spoofer fakeSerialNumber];
     if ([key isEqualToString:@"IOPlatformUUID"] || [key isEqualToString:@"HardwareUUID"])
-        return (__bridge void *)spoofer.fakeHardwareUUID;
+        return (__bridge void *)[spoofer fakeHardwareUUID];
     if ([key isEqualToString:@"ProductType"] || [key isEqualToString:@"hw.machine"])
-        return (__bridge void *)spoofer.fakeMachine;
+        return (__bridge void *)[spoofer fakeMachine];
     if ([key isEqualToString:@"DeviceColor"]) return (__bridge void *)[NSString stringWithFormat:@"%d", arc4random_uniform(10)];
     if ([key isEqualToString:@"DeviceClass"]) {
-        return (__bridge void *)([spoofer.fakeMachine hasPrefix:@"iPhone"] ? @"iPhone" : @"iPad");
+        return (__bridge void *)([[spoofer fakeMachine] hasPrefix:@"iPhone"] ? @"iPhone" : @"iPad");
     }
     return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
 }
