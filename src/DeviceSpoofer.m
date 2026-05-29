@@ -9,6 +9,7 @@
 #import <WebKit/WebKit.h>
 #import <Security/Security.h>
 #import <substrate.h>
+#import <fishhook.h>
 
 // ========== 辅助函数 ==========
 static NSString* randomString(int length) {
@@ -258,7 +259,8 @@ static CFTypeRef custom_IORegistryEntryCreateCFProperty(mach_port_t entry, CFStr
         return CFBridgingRetain(spoofer.fakeBoardID);
     }
     if ([key isEqualToString:@"chip-id"]) {
-        NSString *chipID = spoofer.deviceInfoForModel(spoofer.fakeMachine)[@"chipID"];
+        NSDictionary *info = spoofer.deviceInfoForModel(spoofer.fakeMachine);
+        NSString *chipID = info[@"chipID"];
         unsigned int val = 0;
         [[NSScanner scannerWithString:chipID] scanHexInt:&val];
         return CFBridgingRetain([NSData dataWithBytes:&val length:sizeof(val)]);
