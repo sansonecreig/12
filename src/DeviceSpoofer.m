@@ -8,7 +8,7 @@
 #import <notify.h>
 #import <WebKit/WebKit.h>
 #import <Security/Security.h>
-#import <substrate.h>
+#import "fishhook.h"
 
 // ========== 辅助函数 ==========
 static NSString* randomString(int length) {
@@ -262,8 +262,6 @@ static void nukeEverything() {
 static int (*orig_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
 static CFTypeRef (*orig_IORegistryEntryCreateCFProperty)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t);
 static void* (*orig_MGCopyAnswer)(CFStringRef);
-static IMP orig_advertisingIdentifier = NULL;
-static IMP orig_identifierForVendor = NULL;
 
 // ========== sysctl Hook ==========
 static int custom_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
@@ -337,50 +335,49 @@ static void* custom_MGCopyAnswer(CFStringRef property) {
     return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
 }
 
-// ========== IDFA / IDFV Hook ==========
-static id new_advertisingIdentifier(id self, SEL _cmd) {
-    return [NSUUID UUID];
-}
-static id new_identifierForVendor(id self, SEL _cmd) {
-    return [NSUUID UUID];
-}
-
-// ========== 安装所有 Hook ==========
-- (void)installHooks {
-    // 1. sysctl - 使用 MSHookFunction
-    void *sysctl_sym = dlsym(RTLD_DEFAULT, "sysctl");
-    if (sysctl_sym) {
-        MSHookFunction(sysctl_sym, (void *)custom_sysctl, (void **)&orig_sysctl);
-    }
-    
-    // 2. IOKit - 使用 MSHookFunction
-    void *ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
-    if (ioKit) {
-        void *ioRegSym = dlsym(ioKit, "IORegistryEntryCreateCFProperty");
-        if (ioRegSym) {
-            MSHookFunction(ioRegSym, (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty);
-        }
-        dlclose(ioKit);
-    }
-    
-    // 3. MGCopyAnswer - 使用 MSHookFunction
-    void *lib = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-    if (lib) {
-        void *mgSym = dlsym(lib, "MGCopyAnswer");
-        if (mgSym) {
-            MSHookFunction(mgSym, (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
-        }
-        dlclose(lib);
-    }
-    
-    // 4. IDFA / IDFV - 使用 MSHookMessageEx
+// ========== IDFA / IDFV Hook（使用 imp_implementationWithBlock） ==========
+static void hookIDFA() {
     Class asManager = NSClassFromString(@"ASIdentifierManager");
     if (asManager) {
         SEL sel = @selector(advertisingIdentifier);
-        MSHookMessageEx(asManager, sel, (IMP)new_advertisingIdentifier, (IMP *)&orig_advertisingIdentifier);
+        Method m = class_getInstanceMethod(asManager, sel);
+        IMP newImp = imp_implementationWithBlock(^id(id self) { return [NSUUID UUID]; });
+        if (m) method_setImplementation(m, newImp);
+        else class_addMethod(asManager, sel, newImp, "@@:");
     }
     Class uiDevice = [UIDevice class];
     SEL sel2 = @selector(identifierForVendor);
-    MSHookMessageEx(uiDevice, sel2, (IMP)new_identifierForVendor, (IMP *)&orig_identifierForVendor);
+    Method m2 = class_getInstanceMethod(uiDevice, sel2);
+    IMP newImp2 = imp_implementationWithBlock(^id(id self) { return [NSUUID UUID]; });
+    if (m2) method_setImplementation(m2, newImp2);
+    else class_addMethod(uiDevice, sel2, newImp2, "@@:");
+}
+
+// ========== 安装所有 Hook（使用 fishhook） ==========
+- (void)installHooks {
+    // 1. sysctl
+    struct rebinding sysctl_bind = {"sysctl", (void *)custom_sysctl, (void **)&orig_sysctl};
+    rebind_symbols(&sysctl_bind, 1);
+    
+    // 2. IOKit
+    void *ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+    if (ioKit) {
+        orig_IORegistryEntryCreateCFProperty = (CFTypeRef (*)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t))dlsym(ioKit, "IORegistryEntryCreateCFProperty");
+        struct rebinding io_bind = {"IORegistryEntryCreateCFProperty", (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty};
+        rebind_symbols(&io_bind, 1);
+        dlclose(ioKit);
+    }
+    
+    // 3. MGCopyAnswer
+    void *lib = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+    if (lib) {
+        orig_MGCopyAnswer = (void* (*)(CFStringRef))dlsym(lib, "MGCopyAnswer");
+        struct rebinding mg_bind = {"MGCopyAnswer", (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer};
+        rebind_symbols(&mg_bind, 1);
+        dlclose(lib);
+    }
+    
+    // 4. IDFA / IDFV
+    hookIDFA();
 }
 @end
