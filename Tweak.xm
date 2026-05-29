@@ -179,12 +179,17 @@ static void addGlobalGesture() {
 
 static void appDidFinishLaunching(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
+        // 在 App 启动完成后调用 startHooking，延迟安装 Hook 以避免 dyld 崩溃
+        [[DeviceSpoofer shared] startHooking];
+        
         buildPanel();
         addGlobalGesture();
     });
 }
 
 %ctor {
+    // 移除 init 中的自动 Hook 安装，改为在 appDidFinishLaunching 中调用 startHooking
+    // 仅初始化 DeviceSpoofer 单例，不安装 Hook
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         [DeviceSpoofer shared];
     });
