@@ -1,52 +1,68 @@
 #import "NetworkInterceptor.h"
 #import <objc/runtime.h>
 
-static IMP original_dataTaskWithCompletion = NULL;
-static BOOL isIntercepting = NO;
+@interface MatrixURLProtocol : NSURLProtocol
+@end
 
-static id new_dataTaskWithCompletion(id self, SEL _cmd, NSURLRequest *request, void (^completionHandler)(NSData*, NSURLResponse*, NSError*)) {
-    if ([NSURLProtocol propertyForKey:@"MatrixIntercepted" inRequest:request]) {
-        typedef id (*Func)(id, SEL, NSURLRequest*, id);
-        return ((Func)original_dataTaskWithCompletion)(self, _cmd, request, completionHandler);
+static NSString *const kMatrixHandledKey = @"MatrixURLProtocolHandled";
+
+@implementation MatrixURLProtocol
+
++ (BOOL)canInitWithRequest:(NSURLRequest *)request {
+    if ([NSURLProtocol propertyForKey:kMatrixHandledKey inRequest:request]) {
+        return NO;
     }
-    
-    if ([request.URL.host containsString:@"kkong.xyz"]) {
-        if (completionHandler) {
-            NSHTTPURLResponse *resp = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil];
-            NSData *fakeData = [@"{\"status\":\"blocked\"}" dataUsingEncoding:NSUTF8StringEncoding];
-            completionHandler(fakeData, resp, nil);
-        }
-        return nil;
+    NSString *scheme = request.URL.scheme.lowercaseString;
+    if ([scheme isEqualToString:@"http"] || [scheme isEqualToString:@"https"]) {
+        return YES;
     }
-    
-    NSMutableURLRequest *newReq = [request mutableCopy];
-    [NSURLProtocol setProperty:@YES forKey:@"MatrixIntercepted" inRequest:newReq];
-    typedef id (*Func)(id, SEL, NSURLRequest*, id);
-    return ((Func)original_dataTaskWithCompletion)(self, _cmd, newReq, completionHandler);
+    return NO;
 }
+
++ (NSURLRequest *)canonicalRequestForRequest:(NSURLRequest *)request {
+    return request;
+}
+
+- (void)startLoading {
+    NSMutableURLRequest *newRequest = [self.request mutableCopy];
+    [NSURLProtocol setProperty:@YES forKey:kMatrixHandledKey inRequest:newRequest];
+    
+    NSURLSession *session = [NSURLSession sharedSession];
+    NSURLSessionDataTask *task = [session dataTaskWithRequest:newRequest
+                                            completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (error) {
+            [self.client URLProtocol:self didFailWithError:error];
+        } else {
+            if ([self.request.URL.host containsString:@"kkong.xyz"]) {
+                NSString *fakeJSON = @"{\"status\":1,\"message\":\"ok\"}";
+                data = [fakeJSON dataUsingEncoding:NSUTF8StringEncoding];
+                NSHTTPURLResponse *fakeResponse = [[NSHTTPURLResponse alloc] initWithURL:self.request.URL
+                                                                              statusCode:200
+                                                                             HTTPVersion:@"HTTP/1.1"
+                                                                            headerFields:@{@"Content-Type": @"application/json"}];
+                response = fakeResponse;
+            }
+            [self.client URLProtocol:self didReceiveResponse:response cacheStoragePolicy:NSURLCacheStorageAllowed];
+            [self.client URLProtocol:self didLoadData:data];
+            [self.client URLProtocolDidFinishLoading:self];
+        }
+    }];
+    [task resume];
+}
+
+- (void)stopLoading {
+}
+
+@end
 
 @implementation NetworkInterceptor
 
 + (void)startIntercepting {
-    if (isIntercepting) return;
-    Class cls = [NSURLSession class];
-    SEL sel = @selector(dataTaskWithRequest:completionHandler:);
-    Method m = class_getInstanceMethod(cls, sel);
-    if (m) {
-        original_dataTaskWithCompletion = method_setImplementation(m, (IMP)new_dataTaskWithCompletion);
-        isIntercepting = YES;
-    }
+    [NSURLProtocol registerClass:[MatrixURLProtocol class]];
 }
 
 + (void)stopIntercepting {
-    if (!isIntercepting) return;
-    Class cls = [NSURLSession class];
-    SEL sel = @selector(dataTaskWithRequest:completionHandler:);
-    Method m = class_getInstanceMethod(cls, sel);
-    if (m && original_dataTaskWithCompletion) {
-        method_setImplementation(m, original_dataTaskWithCompletion);
-        isIntercepting = NO;
-    }
+    [NSURLProtocol unregisterClass:[MatrixURLProtocol class]];
 }
 
 @end

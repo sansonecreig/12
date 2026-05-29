@@ -23,30 +23,14 @@
     static FloatingDebugWindow *win = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        UIWindowScene *scene = nil;
-        if (@available(iOS 13.0, *)) {
-            for (UIScene *s in [UIApplication sharedApplication].connectedScenes) {
-                if (s.activationState == UISceneActivationStateForegroundActive && [s isKindOfClass:[UIWindowScene class]]) {
-                    scene = (UIWindowScene *)s;
-                    break;
-                }
-            }
-        }
-        win = [[FloatingDebugWindow alloc] initWithWindowScene:scene];
-        win.windowLevel = UIWindowLevelStatusBar + 100;
+        win = [[FloatingDebugWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+        win.windowLevel = UIWindowLevelAlert + 1;
         win.backgroundColor = [UIColor clearColor];
         win.hidden = NO;
-        win.strongVC = [[FloatingDebugViewController alloc] init];
-        win.rootViewController = win.strongVC;
+        win.rootViewController = [[FloatingDebugViewController alloc] init];
         [win setupUI];
     });
     return win;
-}
-
-- (instancetype)initWithWindowScene:(UIWindowScene *)scene {
-    self = [super initWithWindowScene:scene];
-    if (self) self.userInteractionEnabled = YES;
-    return self;
 }
 
 - (void)setupUI {
@@ -72,22 +56,29 @@
     [closeBtn addTarget:self action:@selector(hidePanel) forControlEvents:UIControlEventTouchUpInside];
     [_panel addSubview:closeBtn];
     
-    NSArray *buttons = @[
-        @{@"title": @"📱 设备切换", @"action": @"showDeviceSpooferMenu"},
-        @{@"title": @"🔍 内存查看器", @"action": @"showMemoryViewer"},
-        @{@"title": @"🔎 内存扫描", @"action": @"showScanDemo"}
-    ];
+    UIButton *spoofBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    spoofBtn.frame = CGRectMake(10, 60, 260, 40);
+    [spoofBtn setTitle:@"📱 设备切换" forState:UIControlStateNormal];
+    spoofBtn.backgroundColor = [UIColor darkGrayColor];
+    spoofBtn.layer.cornerRadius = 8;
+    [spoofBtn addTarget:self action:@selector(showDeviceSpooferMenu) forControlEvents:UIControlEventTouchUpInside];
+    [_panel addSubview:spoofBtn];
     
-    for (int i = 0; i < buttons.count; i++) {
-        NSDictionary *btnInfo = buttons[i];
-        UIButton *btn = [UIButton buttonWithType:UIButtonTypeSystem];
-        btn.frame = CGRectMake(10, 50 + i * 50, 260, 40);
-        [btn setTitle:btnInfo[@"title"] forState:UIControlStateNormal];
-        btn.backgroundColor = [UIColor darkGrayColor];
-        btn.layer.cornerRadius = 8;
-        [btn addTarget:self action:NSSelectorFromString(btnInfo[@"action"]) forControlEvents:UIControlEventTouchUpInside];
-        [_panel addSubview:btn];
-    }
+    UIButton *memViewBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    memViewBtn.frame = CGRectMake(10, 110, 260, 40);
+    [memViewBtn setTitle:@"🔍 内存查看器" forState:UIControlStateNormal];
+    memViewBtn.backgroundColor = [UIColor darkGrayColor];
+    memViewBtn.layer.cornerRadius = 8;
+    [memViewBtn addTarget:self action:@selector(showMemoryViewer) forControlEvents:UIControlEventTouchUpInside];
+    [_panel addSubview:memViewBtn];
+    
+    UIButton *scanBtn = [UIButton buttonWithType:UIButtonTypeSystem];
+    scanBtn.frame = CGRectMake(10, 160, 260, 40);
+    [scanBtn setTitle:@"🔎 内存扫描" forState:UIControlStateNormal];
+    scanBtn.backgroundColor = [UIColor darkGrayColor];
+    scanBtn.layer.cornerRadius = 8;
+    [scanBtn addTarget:self action:@selector(showScanDemo) forControlEvents:UIControlEventTouchUpInside];
+    [_panel addSubview:scanBtn];
     
     _floatingDot = [UIButton buttonWithType:UIButtonTypeCustom];
     _floatingDot.frame = CGRectMake(20, 120, 40, 40);
