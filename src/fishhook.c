@@ -23,6 +23,7 @@
 
 #include "fishhook.h"
 
+#include <stdlib.h>
 #include <dlfcn.h>
 #include <stdbool.h>
 #include <sys/mman.h>
