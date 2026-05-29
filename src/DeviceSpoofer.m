@@ -132,9 +132,20 @@ static void nukeEverything() {
         _fakeHardwareUUID = [defaults stringForKey:@"FakeHardwareUUID"] ?: generateRandomUUID();
         _shadowSuffix = [defaults stringForKey:@"ShadowDomainKey"] ?: [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
         [self saveFakeValues];
-        [self installHooks];
+        // Hook 延迟到 startHooking 中执行，避免 dyld 未就绪时崩溃
     }
     return self;
+}
+
+// 延迟启动 Hook，确保 dyld 已处理完所有 image
+- (void)startHooking {
+    static dispatch_once_t onceToken;
+    dispatch_once(&onceToken, ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            [self installHooks];
+            NSLog(@"[DeviceSpoofer] Hooks installed after delay");
+        });
+    });
 }
 
 - (void)saveFakeValues {
