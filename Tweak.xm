@@ -25,7 +25,7 @@ static void showDeviceMenu() {
     [ipads sortUsingComparator:^NSComparisonResult(NSString *a, NSString *b) {
         return [a compare:b options:NSNumericSearch];
     }];
-    
+
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Matrix 拓扑中枢"
                                                                    message:@"切换后自动洗机(重置Keychain)，需手动滑掉App冷启动"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
@@ -102,7 +102,7 @@ static void buildPanel() {
     if (panel) [panel removeFromSuperview];
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
-    
+
     panel = [[UIView alloc] initWithFrame:CGRectMake(10, 100, 260, 150)];
     panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.9];
     panel.layer.cornerRadius = 12;
@@ -110,26 +110,26 @@ static void buildPanel() {
     panel.layer.borderColor = [UIColor whiteColor].CGColor;
     panel.hidden = YES;
     [keyWindow addSubview:panel];
-    
+
     UILabel *title = [[UILabel alloc] initWithFrame:CGRectMake(10, 10, 200, 30)];
     title.text = @"Matrix Aegis Lite";
     title.textColor = [UIColor whiteColor];
     title.font = [UIFont boldSystemFontOfSize:16];
     [panel addSubview:title];
-    
+
     // 按钮事件处理对象
     static NSObject *btnTarget = nil;
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
         btnTarget = [[NSObject alloc] init];
-        class_addMethod([btnTarget class], @selector(showMenu), imp_implementationWithBlock(^(id self) { 
-            showDeviceMenu(); 
+        class_addMethod([btnTarget class], @selector(showMenu), imp_implementationWithBlock(^(id self) {
+            showDeviceMenu();
         }), "v@:");
-        class_addMethod([btnTarget class], @selector(closePanel), imp_implementationWithBlock(^(id self) { 
-            togglePanel(); 
+        class_addMethod([btnTarget class], @selector(closePanel), imp_implementationWithBlock(^(id self) {
+            togglePanel();
         }), "v@:");
     });
-    
+
     UIButton *spoofBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     spoofBtn.frame = CGRectMake(10, 50, 240, 40);
     [spoofBtn setTitle:@"📱 切换设备型号" forState:UIControlStateNormal];
@@ -137,7 +137,7 @@ static void buildPanel() {
     spoofBtn.layer.cornerRadius = 8;
     [spoofBtn addTarget:btnTarget action:@selector(showMenu) forControlEvents:UIControlEventTouchUpInside];
     [panel addSubview:spoofBtn];
-    
+
     UIButton *closeBtn = [UIButton buttonWithType:UIButtonTypeSystem];
     closeBtn.frame = CGRectMake(220, 10, 30, 30);
     [closeBtn setTitle:@"X" forState:UIControlStateNormal];
@@ -150,7 +150,7 @@ static void buildPanel() {
 static void addGlobalGesture() {
     UIWindow *keyWindow = [UIApplication sharedApplication].keyWindow;
     if (!keyWindow) return;
-    
+
     // 移除已有双指双击手势
     for (UIGestureRecognizer *g in keyWindow.gestureRecognizers) {
         if ([g isKindOfClass:[UITapGestureRecognizer class]]) {
@@ -160,7 +160,7 @@ static void addGlobalGesture() {
             }
         }
     }
-    
+
     // 创建手势目标对象
     static NSObject *gestureTarget = nil;
     static dispatch_once_t onceToken;
@@ -170,7 +170,7 @@ static void addGlobalGesture() {
             togglePanel();
         }), "v@:");
     });
-    
+
     UITapGestureRecognizer *doubleTwo = [[UITapGestureRecognizer alloc] initWithTarget:gestureTarget action:@selector(handleDoubleTwo)];
     doubleTwo.numberOfTouchesRequired = 2;
     doubleTwo.numberOfTapsRequired = 2;
@@ -179,17 +179,17 @@ static void addGlobalGesture() {
 
 static void appDidFinishLaunching(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        // 在 App 启动完成后调用 startHooking，延迟安装 Hook 以避免 dyld 崩溃
-        [[DeviceSpoofer shared] startHooking];
-        
         buildPanel();
         addGlobalGesture();
+        // 启动网络拦截
+        [NetworkInterceptor startIntercepting];
+        // ★ 延迟启动设备伪造 Hook（避免 dyld 崩溃）
+        [[DeviceSpoofer shared] startHooking];
     });
 }
 
 %ctor {
-    // 移除 init 中的自动 Hook 安装，改为在 appDidFinishLaunching 中调用 startHooking
-    // 仅初始化 DeviceSpoofer 单例，不安装 Hook
+    // 只创建单例，不执行 Hook（Hook 会延迟到 App 启动完成后）
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         [DeviceSpoofer shared];
     });
