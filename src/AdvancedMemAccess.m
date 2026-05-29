@@ -1,4 +1,5 @@
 #import "AdvancedMemAccess.h"
+#import <mach/mach_vm.h>
 
 @interface AdvancedMemAccess () {
     dispatch_queue_t _accessQueue;
