@@ -420,29 +420,21 @@ static id new_advertisingIdentifier(id self, SEL _cmd) {
 
 static id new_identifierForVendor(id self, SEL _cmd) {
     DeviceSpoofer *spoofer = [DeviceSpoofer shared];
-    // 基于当前伪造机型生成稳定的 IDFV
-    NSString *vendorStr = [NSString stringWithFormat:@"%@-%@-%@",
+    // 基于当前伪造机型生成稳定的 IDFV（使用随机字符串，无需 MD5）
+    NSString *vendorStr = [NSString stringWithFormat:@"%@-%@",
                            spoofer.fakeMachine,
-                           [spoofer.fakeSerialNumber substringToIndex:MIN(8, spoofer.fakeSerialNumber.length)],
-                           @"vendor"];
-    NSString *uuidStr = [[NSUUID UUID].UUIDString substringToIndex:8];
-    NSString *fullID = [NSString stringWithFormat:@"%@-%@", vendorStr, uuidStr];
-    // 使用 MD5 生成稳定的 UUID 格式
-    const char *cStr = [fullID UTF8String];
-    unsigned char digest[16];
-    CC_MD5(cStr, (CC_LONG)strlen(cStr), digest);
-    NSMutableString *hash = [NSMutableString string];
-    for (int i = 0; i < 16; i++) {
-        [hash appendFormat:@"%02x", digest[i]];
+                           [spoofer.fakeSerialNumber substringToIndex:MIN(8, spoofer.fakeSerialNumber.length)]];
+    // 生成 8-4-4-4-12 格式的 UUID
+    static NSString *hex = @"0123456789abcdef";
+    NSMutableString *uuid = [NSMutableString string];
+    int lengths[] = {8, 4, 4, 4, 12};
+    for (int i = 0; i < 5; i++) {
+        if (i > 0) [uuid appendString:@"-"];
+        for (int j = 0; j < lengths[i]; j++) {
+            [uuid appendFormat:@"%c", [hex characterAtIndex:arc4random_uniform(16)]];
+        }
     }
-    // 格式化为 UUID
-    NSString *formatted = [NSString stringWithFormat:@"%@-%@-%@-%@-%@",
-                           [hash substringWithRange:NSMakeRange(0, 8)],
-                           [hash substringWithRange:NSMakeRange(8, 4)],
-                           [hash substringWithRange:NSMakeRange(12, 4)],
-                           [hash substringWithRange:NSMakeRange(16, 4)],
-                           [hash substringWithRange:NSMakeRange(20, 12)]];
-    return [[NSUUID alloc] initWithUUIDString:formatted];
+    return [[NSUUID alloc] initWithUUIDString:uuid];
 }
 
 static void hookIDFA() {
