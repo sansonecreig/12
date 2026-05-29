@@ -419,12 +419,7 @@ static id new_advertisingIdentifier(id self, SEL _cmd) {
 }
 
 static id new_identifierForVendor(id self, SEL _cmd) {
-    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
-    // 基于当前伪造机型生成稳定的 IDFV（使用随机字符串，无需 MD5）
-    NSString *vendorStr = [NSString stringWithFormat:@"%@-%@",
-                           spoofer.fakeMachine,
-                           [spoofer.fakeSerialNumber substringToIndex:MIN(8, spoofer.fakeSerialNumber.length)]];
-    // 生成 8-4-4-4-12 格式的 UUID
+    // 生成 8-4-4-4-12 格式的随机 UUID 作为 IDFV
     static NSString *hex = @"0123456789abcdef";
     NSMutableString *uuid = [NSMutableString string];
     int lengths[] = {8, 4, 4, 4, 12};
