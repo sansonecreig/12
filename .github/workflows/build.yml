@@ -1,0 +1,70 @@
+name: Build iOS Tweak
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    timeout-minutes: 30
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup Theos
+        run: |
+          brew install ldid dpkg
+          
+          cd $HOME
+          if [ ! -d "theos" ]; then
+            git clone https://github.com/theos/theos.git
+          fi
+          
+          export THEOS=$HOME/theos
+          ln -sfn $THEOS ./theos
+          
+          echo "THEOS=$HOME/theos" >> $GITHUB_ENV
+          echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
+          
+      - name: Build Tweak
+        id: build
+        env:
+          THEOS: $HOME/theos
+        run: |
+          export THEOS=$HOME/theos
+          export PATH=$THEOS/bin:$PATH
+          
+          cd $GITHUB_WORKSPACE
+          
+          make clean || true
+          make package 2>&1
+          
+          echo "=== Build Output ==="
+          find . -name "*.deb" -o -name "*.dylib" 2>/dev/null | head -20
+          
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: tweak-packages
+          path: |
+            **/*.deb
+            **/*.dylib
+          retention-days: 30
+          
+      - name: Build Summary
+        if: always()
+        run: |
+          echo "## Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Artifacts:" >> $GITHUB_STEP_SUMMARY
+          find . -name "*.deb" 2>/dev/null | while read f; do
+            echo "- \`$f\`" >> $GITHUB_STEP_SUMMARY
+          done
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Download artifacts from the Artifacts section above." >> $GITHUB_STEP_SUMMARY
