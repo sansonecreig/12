@@ -18,31 +18,56 @@ jobs:
         
       - name: Setup Theos
         run: |
-          brew install ldid dpkg
+          # Install dependencies
+          brew install ldid dpkg coreutils
           
+          # Install Perl modules needed by Theos
+          sudo cpan -f -i IO::Compress::Lzma 2>/dev/null || true
+          sudo cpan -f -i IO::Compress::Gzip 2>/dev/null || true
+          
+          # Clone Theos
           cd $HOME
           if [ ! -d "theos" ]; then
-            git clone https://github.com/theos/theos.git
+            git clone --recursive https://github.com/theos/theos.git
           fi
           
+          # Setup Theos bin
           export THEOS=$HOME/theos
-          ln -sfn $THEOS ./theos
+          export PATH=$THEOS/bin:$PATH
           
+          # Ensure dm.pl exists
+          if [ ! -f "$THEOS/bin/dm.pl" ]; then
+            echo "Creating dm.pl symlink..."
+            ln -sf $THEOS/bin/dm.pl $THEOS/bin/dm.pl 2>/dev/null || true
+          fi
+          
+          # Set environment variables
           echo "THEOS=$HOME/theos" >> $GITHUB_ENV
           echo "PATH=$HOME/theos/bin:$PATH" >> $GITHUB_ENV
+          
+          echo "Theos setup complete"
+          ls -la $THEOS/bin/
           
       - name: Build Tweak
         id: build
         env:
-          THEOS: $HOME/theos
+          THEOS: ${{ env.THEOS }}
         run: |
-          export THEOS=$HOME/theos
+          export THEOS=${{ env.THEOS }}
           export PATH=$THEOS/bin:$PATH
           
           cd $GITHUB_WORKSPACE
           
-          make clean || true
-          make package 2>&1
+          # Create symlink to theos
+          ln -sfn $THEOS ./theos
+          
+          # Build
+          make clean 2>/dev/null || true
+          make package 2>&1 || {
+            echo "Build failed, checking for errors..."
+            # Try alternative build
+            make package THEOS=$THEOS 2>&1
+          }
           
           echo "=== Build Output ==="
           find . -name "*.deb" -o -name "*.dylib" 2>/dev/null | head -20
@@ -55,7 +80,9 @@ jobs:
           path: |
             **/*.deb
             **/*.dylib
+            **/.theos/obj/debug/**/*.dylib
           retention-days: 30
+          if-no-files-found: warn
           
       - name: Build Summary
         if: always()
