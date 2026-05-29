@@ -9,7 +9,6 @@
 #import <WebKit/WebKit.h>
 #import <Security/Security.h>
 #import <substrate.h>
-#import <fishhook.h>
 
 // ========== 辅助函数 ==========
 static NSString* randomString(int length) {
@@ -303,29 +302,33 @@ static id new_identifierForVendor(id self, SEL _cmd) {
 
 // ========== 安装所有 Hook ==========
 - (void)installHooks {
-    // 1. sysctl
-    struct rebinding sysctl_bind = {"sysctl", (void *)custom_sysctl, (void **)&orig_sysctl};
-    rebind_symbols(&sysctl_bind, 1);
+    // 1. sysctl - 使用 MSHookFunction
+    void *sysctl_sym = dlsym(RTLD_DEFAULT, "sysctl");
+    if (sysctl_sym) {
+        MSHookFunction(sysctl_sym, (void *)custom_sysctl, (void **)&orig_sysctl);
+    }
     
-    // 2. IOKit
+    // 2. IOKit - 使用 MSHookFunction
     void *ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
     if (ioKit) {
-        orig_IORegistryEntryCreateCFProperty = (CFTypeRef (*)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t))dlsym(ioKit, "IORegistryEntryCreateCFProperty");
-        struct rebinding io_bind = {"IORegistryEntryCreateCFProperty", (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty};
-        rebind_symbols(&io_bind, 1);
+        void *ioRegSym = dlsym(ioKit, "IORegistryEntryCreateCFProperty");
+        if (ioRegSym) {
+            MSHookFunction(ioRegSym, (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty);
+        }
         dlclose(ioKit);
     }
     
-    // 3. MGCopyAnswer
+    // 3. MGCopyAnswer - 使用 MSHookFunction
     void *lib = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
     if (lib) {
-        orig_MGCopyAnswer = (void* (*)(CFStringRef))dlsym(lib, "MGCopyAnswer");
-        struct rebinding mg_bind = {"MGCopyAnswer", (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer};
-        rebind_symbols(&mg_bind, 1);
+        void *mgSym = dlsym(lib, "MGCopyAnswer");
+        if (mgSym) {
+            MSHookFunction(mgSym, (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
+        }
         dlclose(lib);
     }
     
-    // 4. IDFA / IDFV
+    // 4. IDFA / IDFV - 使用 MSHookMessageEx
     Class asManager = NSClassFromString(@"ASIdentifierManager");
     if (asManager) {
         SEL sel = @selector(advertisingIdentifier);
