@@ -182,6 +182,12 @@ static id new_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *request, void
 
 @end
 
+// KingSessionConfiguration 用于外部调用注入/卸载
+@interface KingSessionConfiguration : NSObject
++ (void)inject;
++ (void)eject;
+@end
+
 @implementation KingSessionConfiguration
 + (void)inject { [NetworkInterceptor startIntercepting]; }
 + (void)eject { [NetworkInterceptor stopIntercepting]; }
