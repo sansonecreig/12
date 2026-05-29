@@ -1,108 +1,113 @@
 #import "DeviceSpoofer.h"
 #import <sys/sysctl.h>
+#import <mach/mach.h>
+#import <dlfcn.h>
 #import <UIKit/UIKit.h>
+#import <objc/runtime.h>
+#import <AdSupport/AdSupport.h>
+#import <notify.h>
+#import <WebKit/WebKit.h>
 #import <Security/Security.h>
 #import <substrate.h>
-#import <objc/runtime.h>
-#import <dlfcn.h>
-#import <AdSupport/AdSupport.h>
 
-// ============================================================================
-// 辅助函数：生成随机标识符
-// ============================================================================
+// ========== 辅助函数 ==========
+static NSString* randomString(int length) {
+    static NSString *letters = @"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+    NSMutableString *random = [NSMutableString stringWithCapacity:length];
+    for (int i = 0; i < length; i++) {
+        [random appendFormat:@"%c", [letters characterAtIndex:arc4random_uniform((uint32_t)letters.length)]];
+    }
+    return random;
+}
 
 static NSString* generateRandomSerialNumber(NSString *model) {
-    NSString *prefix = @"C39";
-    NSMutableString *serial = [NSMutableString stringWithString:prefix];
-    static NSString *letters = @"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    for (int i = 0; i < 9; i++) {
-        [serial appendFormat:@"%c", [letters characterAtIndex:arc4random_uniform((uint32_t)letters.length)]];
+    return [NSString stringWithFormat:@"C39%@", randomString(9)];
+}
+static NSString* generateRandomMLBSerial() { return randomString(12); }
+static NSString* generateRandomUUID() { return [[NSUUID UUID] UUIDString]; }
+
+// ========== 数据清理函数 ==========
+static void cleanUserDefaults() {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    NSDictionary *dict = [defaults dictionaryRepresentation];
+    for (NSString *key in dict) {
+        if ([key hasPrefix:@"Fake"] || [key hasPrefix:@"Matrix"] || [key isEqualToString:@"ShadowDomainKey"]) continue;
+        [defaults removeObjectForKey:key];
     }
-    return serial;
+    [defaults synchronize];
 }
 
-static NSString* generateRandomMLBSerial() {
-    NSMutableString *mlb = [NSMutableString string];
-    static NSString *letters = @"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-    for (int i = 0; i < 12; i++) {
-        [mlb appendFormat:@"%c", [letters characterAtIndex:arc4random_uniform((uint32_t)letters.length)]];
+static void cleanKeychainDirectly() {
+    NSArray *secClasses = @[(id)kSecClassGenericPassword, (id)kSecClassCertificate, (id)kSecClassIdentity, (id)kSecClassKey];
+    for (id secClass in secClasses) {
+        NSDictionary *query = @{(id)kSecClass: secClass, (id)kSecMatchLimit: (id)kSecMatchLimitAll};
+        SecItemDelete((__bridge CFDictionaryRef)query);
     }
-    return mlb;
 }
 
-static NSString* generateRandomUUID() {
-    return [[NSUUID UUID] UUIDString];
+static void cleanWebKitData() {
+    NSSet *types = [NSSet setWithArray:@[
+        WKWebsiteDataTypeCookies, WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases,
+        WKWebsiteDataTypeWebSQLDatabases, WKWebsiteDataTypeSessionStorage
+    ]];
+    [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:types modifiedSince:[NSDate distantPast] completionHandler:^{}];
+    NSHTTPCookieStorage *cookieStorage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
+    for (NSHTTPCookie *cookie in cookieStorage.cookies) [cookieStorage deleteCookie:cookie];
 }
 
-// ============================================================================
-// DeviceSpoofer 实现
-// ============================================================================
-
+// ========== DeviceSpoofer 类 ==========
 @interface DeviceSpoofer ()
+@property (nonatomic, strong) NSDictionary *deviceDB;
+@property (nonatomic, copy) NSString *selectedModel;
 @property (nonatomic, copy) NSString *fakeSerialNumber;
 @property (nonatomic, copy) NSString *fakeMLBSerial;
 @property (nonatomic, copy) NSString *fakeHardwareUUID;
-@property (nonatomic, copy) NSString *fakeDeviceColor;
+@property (nonatomic, copy) NSString *shadowSuffix;
 @end
 
-@implementation DeviceSpoofer {
-    NSDictionary *_deviceDB;
-    NSString *_selectedModel;
-    NSString *_shadowSuffix;
-}
-
-static DeviceSpoofer *_sharedInstance = nil;
+@implementation DeviceSpoofer
 
 + (instancetype)shared {
+    static DeviceSpoofer *instance = nil;
     static dispatch_once_t onceToken;
-    dispatch_once(&onceToken, ^{
-        _sharedInstance = [[DeviceSpoofer alloc] init];
-    });
-    return _sharedInstance;
+    dispatch_once(&onceToken, ^{ instance = [[DeviceSpoofer alloc] init]; });
+    return instance;
 }
 
 - (instancetype)init {
     self = [super init];
     if (self) {
         _deviceDB = [self buildDeviceDatabase];
-        _selectedModel = [[NSUserDefaults standardUserDefaults] stringForKey:@"SelectedModel"];
-        if (!_selectedModel || !_deviceDB[_selectedModel]) {
-            _selectedModel = [self currentRealModel];
-        }
-        _shadowSuffix = [[NSUserDefaults standardUserDefaults] stringForKey:@"ShadowDomainKey"];
-        if (!_shadowSuffix) {
-            _shadowSuffix = [NSString stringWithFormat:@"_NEBULA_%@", [[NSUUID UUID].UUIDString substringToIndex:8]];
-            [[NSUserDefaults standardUserDefaults] setObject:_shadowSuffix forKey:@"ShadowDomainKey"];
-        }
-        
-        // 初始化伪造标识符
-        _fakeSerialNumber = [[NSUserDefaults standardUserDefaults] stringForKey:@"FakeSerialNumber"];
-        if (!_fakeSerialNumber) {
-            _fakeSerialNumber = generateRandomSerialNumber(_selectedModel);
-            [[NSUserDefaults standardUserDefaults] setObject:_fakeSerialNumber forKey:@"FakeSerialNumber"];
-        }
-        _fakeMLBSerial = [[NSUserDefaults standardUserDefaults] stringForKey:@"FakeMLBSerial"];
-        if (!_fakeMLBSerial) {
-            _fakeMLBSerial = generateRandomMLBSerial();
-            [[NSUserDefaults standardUserDefaults] setObject:_fakeMLBSerial forKey:@"FakeMLBSerial"];
-        }
-        _fakeHardwareUUID = [[NSUserDefaults standardUserDefaults] stringForKey:@"FakeHardwareUUID"];
-        if (!_fakeHardwareUUID) {
-            _fakeHardwareUUID = generateRandomUUID();
-            [[NSUserDefaults standardUserDefaults] setObject:_fakeHardwareUUID forKey:@"FakeHardwareUUID"];
-        }
-        _fakeDeviceColor = [[NSUserDefaults standardUserDefaults] stringForKey:@"FakeDeviceColor"];
-        if (!_fakeDeviceColor) {
-            _fakeDeviceColor = [NSString stringWithFormat:@"%d", arc4random_uniform(10)];
-            [[NSUserDefaults standardUserDefaults] setObject:_fakeDeviceColor forKey:@"FakeDeviceColor"];
-        }
-        
-        [[NSUserDefaults standardUserDefaults] synchronize];
+        _selectedModel = [self currentRealModel];
+        NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+        _fakeSerialNumber = [defaults stringForKey:@"FakeSerialNumber"] ?: generateRandomSerialNumber(_selectedModel);
+        _fakeMLBSerial = [defaults stringForKey:@"FakeMLBSerial"] ?: generateRandomMLBSerial();
+        _fakeHardwareUUID = [defaults stringForKey:@"FakeHardwareUUID"] ?: generateRandomUUID();
+        _shadowSuffix = [defaults stringForKey:@"ShadowDomainKey"] ?: [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
+        [self saveFakeValues];
+        [self installHooks];
     }
     return self;
 }
 
+- (void)saveFakeValues {
+    NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
+    [defaults setObject:_fakeSerialNumber forKey:@"FakeSerialNumber"];
+    [defaults setObject:_fakeMLBSerial forKey:@"FakeMLBSerial"];
+    [defaults setObject:_fakeHardwareUUID forKey:@"FakeHardwareUUID"];
+    [defaults setObject:_shadowSuffix forKey:@"ShadowDomainKey"];
+    [defaults synchronize];
+}
+
+- (NSString *)currentRealModel {
+    size_t size; sysctlbyname("hw.machine", NULL, &size, NULL, 0);
+    char *machine = malloc(size); sysctlbyname("hw.machine", machine, &size, NULL, 0);
+    NSString *model = [NSString stringWithUTF8String:machine]; free(machine);
+    return model;
+}
+
 - (NSDictionary *)buildDeviceDatabase {
+    // ========== 完整设备数据库 ==========
     NSMutableDictionary *db = [NSMutableDictionary dictionary];
 
     // iPhone 16 Series
@@ -170,329 +175,162 @@ static DeviceSpoofer *_sharedInstance = nil;
     return db;
 }
 
-- (NSString *)currentRealModel {
-    size_t size;
-    sysctlbyname("hw.machine", NULL, &size, NULL, 0);
-    char *machine = malloc(size);
-    sysctlbyname("hw.machine", machine, &size, NULL, 0);
-    NSString *model = [NSString stringWithUTF8String:machine];
-    free(machine);
-    return model;
-}
-
-- (NSDictionary *)deviceInfoForModel:(NSString *)model {
-    return _deviceDB[model];
-}
-
-- (NSArray<NSString *> *)allSupportedModels {
-    return [_deviceDB allKeys];
-}
-
-- (NSString *)fakeMachine {
-    return _selectedModel;
-}
-
-- (NSString *)fakeBoardID {
-    return _deviceDB[_selectedModel][@"boardID"] ?: @"j123ap";
-}
-
-- (NSString *)fakeChipID {
-    return _deviceDB[_selectedModel][@"chipID"] ?: @"0x8010";
-}
-
-- (NSNumber *)fakeMemory {
-    return _deviceDB[_selectedModel][@"memory"] ?: @4294967296;
-}
-
-- (NSNumber *)fakeCPUCount {
-    return _deviceDB[_selectedModel][@"cpuCount"] ?: @6;
-}
-
-- (NSString *)fakeProductName {
-    return _deviceDB[_selectedModel][@"productName"] ?: @"iPhone";
-}
+- (NSDictionary *)deviceInfoForModel:(NSString *)model { return _deviceDB[model]; }
+- (NSArray<NSString *> *)allSupportedModels { return [_deviceDB allKeys]; }
 
 - (void)applySpoofingWithModel:(NSString *)model completion:(void(^)(BOOL needsReboot))completion {
-    if (!_deviceDB[model]) {
-        if (completion) completion(NO);
-        return;
-    }
+    if (!_deviceDB[model]) { if (completion) completion(NO); return; }
     _selectedModel = model;
-    [[NSUserDefaults standardUserDefaults] setObject:model forKey:@"SelectedModel"];
-    
-    // 重新生成所有可变的标识符
     _fakeSerialNumber = generateRandomSerialNumber(model);
     _fakeMLBSerial = generateRandomMLBSerial();
     _fakeHardwareUUID = generateRandomUUID();
-    _fakeDeviceColor = [NSString stringWithFormat:@"%d", arc4random_uniform(10)];
+    _shadowSuffix = [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
+    [self saveFakeValues];
     
-    [[NSUserDefaults standardUserDefaults] setObject:_fakeSerialNumber forKey:@"FakeSerialNumber"];
-    [[NSUserDefaults standardUserDefaults] setObject:_fakeMLBSerial forKey:@"FakeMLBSerial"];
-    [[NSUserDefaults standardUserDefaults] setObject:_fakeHardwareUUID forKey:@"FakeHardwareUUID"];
-    [[NSUserDefaults standardUserDefaults] setObject:_fakeDeviceColor forKey:@"FakeDeviceColor"];
-    [[NSUserDefaults standardUserDefaults] synchronize];
+    // 清理所有残留数据
+    cleanUserDefaults();
+    cleanKeychainDirectly();
+    cleanWebKitData();
     
-    // 重置 Keychain 影子域
-    [self resetKeychainShadowDomain];
-    
-    // 发送通知
-    [[NSNotificationCenter defaultCenter] postNotificationName:@"DeviceSpoofingDidChange" object:model];
-    
-    NSLog(@"[DeviceSpoofer] Switched to model: %@, Serial: %@, UUID: %@", model, _fakeSerialNumber, _fakeHardwareUUID);
+    // 发送通知，刷新Hook中的缓存
+    notify_post("com.matrix.device.spoofing.changed");
     
     if (completion) completion(YES);
 }
 
 - (void)resetKeychainShadowDomain {
-    _shadowSuffix = [NSString stringWithFormat:@"_NEBULA_%@", [[NSUUID UUID].UUIDString substringToIndex:8]];
+    _shadowSuffix = [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
     [[NSUserDefaults standardUserDefaults] setObject:_shadowSuffix forKey:@"ShadowDomainKey"];
     [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
-- (NSString *)shadowDomainSuffix {
-    return _shadowSuffix;
-}
+- (NSString *)fakeMachine { return _selectedModel; }
+- (NSString *)fakeProductType { return _selectedModel; }
+- (NSString *)fakeBoardID { return _deviceDB[_selectedModel][@"boardID"] ?: @"j123ap"; }
+- (uint64_t)fakeMemory { return [_deviceDB[_selectedModel][@"memory"] unsignedLongLongValue]; }
+- (NSInteger)fakeCPUCount { return [_deviceDB[_selectedModel][@"cpuCount"] integerValue]; }
+- (NSString *)fakeSerialNumber { return _fakeSerialNumber; }
+- (NSString *)fakeMLBSerial { return _fakeMLBSerial; }
+- (NSString *)fakeHardwareUUID { return _fakeHardwareUUID; }
 
-@end
-
-// ============================================================================
-// Hook 实现：sysctl
-// ============================================================================
-
-static int (*orig_sysctlbyname)(const char *, void *, size_t *, void *, size_t) = NULL;
-
-static int hooked_sysctlbyname(const char *name, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
-    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
-    
-    if (strcmp(name, "hw.machine") == 0) {
-        const char *machine = [spoofer.fakeMachine UTF8String];
-        size_t len = strlen(machine) + 1;
-        if (oldp && oldlenp) {
-            if (*oldlenp >= len) {
-                memcpy(oldp, machine, len);
-            }
-            *oldlenp = len;
-        }
-        return 0;
-    }
-    
-    if (strcmp(name, "hw.memsize") == 0 || strcmp(name, "hw.physmem") == 0) {
-        uint64_t mem = [spoofer.fakeMemory unsignedLongLongValue];
-        if (oldp && oldlenp) {
-            if (*oldlenp >= sizeof(uint64_t)) {
-                memcpy(oldp, &mem, sizeof(uint64_t));
-            }
-            *oldlenp = sizeof(uint64_t);
-        }
-        return 0;
-    }
-    
-    if (strcmp(name, "hw.ncpu") == 0) {
-        int cpu = [spoofer.fakeCPUCount intValue];
-        if (oldp && oldlenp) {
-            if (*oldlenp >= sizeof(int)) {
-                memcpy(oldp, &cpu, sizeof(int));
-            }
-            *oldlenp = sizeof(int);
-        }
-        return 0;
-    }
-    
-    return orig_sysctlbyname(name, oldp, oldlenp, newp, newlen);
-}
-
-// ============================================================================
-// Hook 实现：MGCopyAnswer (MobileGestalt)
-// ============================================================================
-
-static void* (*orig_MGCopyAnswer)(CFStringRef) = NULL;
-
-static void* hooked_MGCopyAnswer(CFStringRef property) {
-    NSString *key = (__bridge NSString *)property;
-    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
-    
-    // 序列号
-    if ([key isEqualToString:@"SerialNumber"]) {
-        return (__bridge_retained void *)[spoofer.fakeSerialNumber copy];
-    }
-    
-    // MLB 序列号
-    if ([key isEqualToString:@"MLBSerialNumber"]) {
-        return (__bridge_retained void *)[spoofer.fakeMLBSerial copy];
-    }
-    
-    // UniqueDeviceID / UniqueChipID
-    if ([key isEqualToString:@"UniqueDeviceID"] || [key isEqualToString:@"UniqueChipID"]) {
-        return (__bridge_retained void *)[spoofer.fakeSerialNumber copy];
-    }
-    
-    // 硬件 UUID
-    if ([key isEqualToString:@"IOPlatformUUID"] || [key isEqualToString:@"HardwareUUID"]) {
-        return (__bridge_retained void *)[spoofer.fakeHardwareUUID copy];
-    }
-    
-    // 设备颜色
-    if ([key isEqualToString:@"DeviceColor"]) {
-        return (__bridge_retained void *)[spoofer.fakeDeviceColor copy];
-    }
-    
-    // 设备类型
-    if ([key isEqualToString:@"DeviceClass"]) {
-        NSString *model = spoofer.fakeMachine;
-        NSString *deviceClass = @"iPhone";
-        if ([model hasPrefix:@"iPad"]) deviceClass = @"iPad";
-        return (__bridge_retained void *)[deviceClass copy];
-    }
-    
-    // 产品类型 / 机型
-    if ([key isEqualToString:@"ProductType"] || [key isEqualToString:@"UserAssignedDeviceName"]) {
-        return (__bridge_retained void *)[spoofer.fakeMachine copy];
-    }
-    
-    // 主板 ID
-    if ([key isEqualToString:@"BoardId"]) {
-        return (__bridge_retained void *)[spoofer.fakeBoardID copy];
-    }
-    
-    // 芯片 ID
-    if ([key isEqualToString:@"ChipID"]) {
-        NSString *chipID = spoofer.fakeChipID;
-        unsigned int chipIdVal = 0;
-        NSScanner *scanner = [NSScanner scannerWithString:chipID];
-        [scanner scanHexInt:&chipIdVal];
-        return (void *)(uintptr_t)chipIdVal;
-    }
-    
-    // 调用原始函数
-    if (orig_MGCopyAnswer) {
-        return orig_MGCopyAnswer(property);
-    }
-    return NULL;
-}
-
-// ============================================================================
-// Hook 实现：IOKit IORegistryEntryCreateCFProperty
-// ============================================================================
-
-static CFTypeRef (*orig_IORegistryEntryCreateCFProperty)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t) = NULL;
-
-static CFTypeRef hooked_IORegistryEntryCreateCFProperty(mach_port_t entry, CFStringRef property, CFAllocatorRef allocator, uint32_t options) {
-    NSString *key = (__bridge NSString *)property;
-    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
-    
-    if ([key isEqualToString:@"IOPlatformSerialNumber"]) {
-        return CFBridgingRetain([spoofer.fakeSerialNumber copy]);
-    }
-    
-    if ([key isEqualToString:@"IOPlatformUUID"]) {
-        return CFBridgingRetain([spoofer.fakeHardwareUUID copy]);
-    }
-    
-    if ([key isEqualToString:@"board-id"]) {
-        return CFBridgingRetain([spoofer.fakeBoardID copy]);
-    }
-    
-    if ([key isEqualToString:@"chip-id"]) {
-        NSString *chipID = spoofer.fakeChipID;
-        unsigned int chipIdVal = 0;
-        NSScanner *scanner = [NSScanner scannerWithString:chipID];
-        [scanner scanHexInt:&chipIdVal];
-        return CFBridgingRetain([NSData dataWithBytes:&chipIdVal length:sizeof(chipIdVal)]);
-    }
-    
-    if (orig_IORegistryEntryCreateCFProperty) {
-        return orig_IORegistryEntryCreateCFProperty(entry, property, allocator, options);
-    }
-    return NULL;
-}
-
-// ============================================================================
-// Hook 实现：IDFA / IDFV
-// ============================================================================
-
+// ========== 原始函数指针 ==========
+static int (*orig_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
+static CFTypeRef (*orig_IORegistryEntryCreateCFProperty)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t);
+static void* (*orig_MGCopyAnswer)(CFStringRef);
 static IMP orig_advertisingIdentifier = NULL;
 static IMP orig_identifierForVendor = NULL;
 
-static id new_advertisingIdentifier(id self, SEL _cmd) {
-    // 返回一个固定的伪造 IDFA
-    return [[NSUUID alloc] initWithUUIDString:@"00000000-0000-0000-0000-000000000001"];
-}
-
-static id new_identifierForVendor(id self, SEL _cmd) {
-    // 生成 8-4-4-4-12 格式的随机 UUID 作为 IDFV
-    static NSString *hex = @"0123456789abcdef";
-    NSMutableString *uuid = [NSMutableString string];
-    int lengths[] = {8, 4, 4, 4, 12};
-    for (int i = 0; i < 5; i++) {
-        if (i > 0) [uuid appendString:@"-"];
-        for (int j = 0; j < lengths[i]; j++) {
-            [uuid appendFormat:@"%c", [hex characterAtIndex:arc4random_uniform(16)]];
+// ========== sysctl Hook ==========
+static int custom_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
+    int ret = orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
+    if (ret != 0 || namelen < 2 || name[0] != CTL_HW) return ret;
+    
+    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
+    if (name[1] == HW_MACHINE || name[1] == HW_MODEL) {
+        NSString *fake = spoofer.fakeMachine;
+        size_t fakeLen = fake.length + 1;
+        if (oldlenp && oldp && *oldlenp >= fakeLen) {
+            memset(oldp, 0, *oldlenp);
+            strcpy(oldp, fake.UTF8String);
+            *oldlenp = fakeLen;
+        } else if (oldlenp) *oldlenp = fakeLen;
+    } else if (name[1] == HW_MEMSIZE) {
+        uint64_t fakeMem = spoofer.fakeMemory;
+        if (oldlenp && oldp && *oldlenp >= sizeof(uint64_t)) {
+            memcpy(oldp, &fakeMem, sizeof(uint64_t));
+            *oldlenp = sizeof(uint64_t);
+        }
+    } else if (name[1] == HW_NCPU || name[1] == 3 || name[1] == 7) {
+        int fakeCpu = (int)spoofer.fakeCPUCount;
+        if (oldlenp && oldp && *oldlenp >= sizeof(int)) {
+            memcpy(oldp, &fakeCpu, sizeof(int));
+            *oldlenp = sizeof(int);
         }
     }
-    return [[NSUUID alloc] initWithUUIDString:uuid];
+    return ret;
 }
 
-static void hookIDFA() {
+// ========== IOKit Hook ==========
+static CFTypeRef custom_IORegistryEntryCreateCFProperty(mach_port_t entry, CFStringRef property, CFAllocatorRef allocator, uint32_t options) {
+    NSString *key = (__bridge NSString *)property;
+    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
+    if ([key isEqualToString:@"board-id"]) {
+        return CFBridgingRetain(spoofer.fakeBoardID);
+    }
+    if ([key isEqualToString:@"chip-id"]) {
+        NSString *chipID = spoofer.deviceInfoForModel(spoofer.fakeMachine)[@"chipID"];
+        unsigned int val = 0;
+        [[NSScanner scannerWithString:chipID] scanHexInt:&val];
+        return CFBridgingRetain([NSData dataWithBytes:&val length:sizeof(val)]);
+    }
+    if ([key isEqualToString:@"IOPlatformSerialNumber"]) {
+        return CFBridgingRetain(spoofer.fakeSerialNumber);
+    }
+    if ([key isEqualToString:@"IOPlatformUUID"]) {
+        return CFBridgingRetain(spoofer.fakeHardwareUUID);
+    }
+    return orig_IORegistryEntryCreateCFProperty(entry, property, allocator, options);
+}
+
+// ========== MGCopyAnswer Hook ==========
+static void* custom_MGCopyAnswer(CFStringRef property) {
+    NSString *key = (__bridge NSString *)property;
+    DeviceSpoofer *spoofer = [DeviceSpoofer shared];
+    if ([key isEqualToString:@"SerialNumber"]) return (__bridge void *)spoofer.fakeSerialNumber;
+    if ([key isEqualToString:@"MLBSerialNumber"]) return (__bridge void *)spoofer.fakeMLBSerial;
+    if ([key isEqualToString:@"UniqueDeviceID"] || [key isEqualToString:@"UniqueChipID"])
+        return (__bridge void *)spoofer.fakeSerialNumber;
+    if ([key isEqualToString:@"IOPlatformUUID"] || [key isEqualToString:@"HardwareUUID"])
+        return (__bridge void *)spoofer.fakeHardwareUUID;
+    if ([key isEqualToString:@"ProductType"] || [key isEqualToString:@"hw.machine"])
+        return (__bridge void *)spoofer.fakeMachine;
+    if ([key isEqualToString:@"DeviceColor"]) return (__bridge void *)[NSString stringWithFormat:@"%d", arc4random_uniform(10)];
+    if ([key isEqualToString:@"DeviceClass"]) {
+        return (__bridge void *)([spoofer.fakeMachine hasPrefix:@"iPhone"] ? @"iPhone" : @"iPad");
+    }
+    return orig_MGCopyAnswer ? orig_MGCopyAnswer(property) : NULL;
+}
+
+// ========== IDFA / IDFV Hook ==========
+static id new_advertisingIdentifier(id self, SEL _cmd) {
+    return [NSUUID UUID];
+}
+static id new_identifierForVendor(id self, SEL _cmd) {
+    return [NSUUID UUID];
+}
+
+// ========== 安装所有 Hook ==========
+- (void)installHooks {
+    // 1. sysctl
+    struct rebinding sysctl_bind = {"sysctl", (void *)custom_sysctl, (void **)&orig_sysctl};
+    rebind_symbols(&sysctl_bind, 1);
+    
+    // 2. IOKit
+    void *ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
+    if (ioKit) {
+        orig_IORegistryEntryCreateCFProperty = (CFTypeRef (*)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t))dlsym(ioKit, "IORegistryEntryCreateCFProperty");
+        struct rebinding io_bind = {"IORegistryEntryCreateCFProperty", (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty};
+        rebind_symbols(&io_bind, 1);
+        dlclose(ioKit);
+    }
+    
+    // 3. MGCopyAnswer
+    void *lib = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
+    if (lib) {
+        orig_MGCopyAnswer = (void* (*)(CFStringRef))dlsym(lib, "MGCopyAnswer");
+        struct rebinding mg_bind = {"MGCopyAnswer", (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer};
+        rebind_symbols(&mg_bind, 1);
+        dlclose(lib);
+    }
+    
+    // 4. IDFA / IDFV
     Class asManager = NSClassFromString(@"ASIdentifierManager");
     if (asManager) {
         SEL sel = @selector(advertisingIdentifier);
-        Method method = class_getInstanceMethod(asManager, sel);
-        if (method) {
-            orig_advertisingIdentifier = method_getImplementation(method);
-            method_setImplementation(method, (IMP)new_advertisingIdentifier);
-        }
+        MSHookMessageEx(asManager, sel, (IMP)new_advertisingIdentifier, (IMP *)&orig_advertisingIdentifier);
     }
-    
     Class uiDevice = [UIDevice class];
     SEL sel2 = @selector(identifierForVendor);
-    Method method2 = class_getInstanceMethod(uiDevice, sel2);
-    if (method2) {
-        orig_identifierForVendor = method_getImplementation(method2);
-        method_setImplementation(method2, (IMP)new_identifierForVendor);
-    }
-    
-    NSLog(@"[DeviceSpoofer] IDFA/IDFV hooks installed");
+    MSHookMessageEx(uiDevice, sel2, (IMP)new_identifierForVendor, (IMP *)&orig_identifierForVendor);
 }
-
-// ============================================================================
-// 初始化函数
-// ============================================================================
-
-__attribute__((constructor))
-static void initDeviceSpooferHooks() {
-    // Hook sysctlbyname
-    void *libSystem = dlopen(NULL, RTLD_LAZY);
-    orig_sysctlbyname = (int (*)(const char *, void *, size_t *, void *, size_t))dlsym(libSystem, "sysctlbyname");
-    if (orig_sysctlbyname) {
-        MSHookFunction((void *)orig_sysctlbyname, (void *)hooked_sysctlbyname, (void **)&orig_sysctlbyname);
-    }
-    
-    // Hook MGCopyAnswer
-    void *libMobileGestalt = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
-    if (libMobileGestalt) {
-        orig_MGCopyAnswer = (void* (*)(CFStringRef))dlsym(libMobileGestalt, "MGCopyAnswer");
-        if (orig_MGCopyAnswer) {
-            MSHookFunction((void *)orig_MGCopyAnswer, (void *)hooked_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
-        }
-    }
-    
-    // Hook IOKit
-    void *ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
-    if (ioKit) {
-        orig_IORegistryEntryCreateCFProperty = (CFTypeRef (*)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t))
-            dlsym(ioKit, "IORegistryEntryCreateCFProperty");
-        if (orig_IORegistryEntryCreateCFProperty) {
-            MSHookFunction((void *)orig_IORegistryEntryCreateCFProperty, 
-                          (void *)hooked_IORegistryEntryCreateCFProperty, 
-                          (void **)&orig_IORegistryEntryCreateCFProperty);
-        }
-    }
-    
-    // Hook IDFA/IDFV
-    hookIDFA();
-    
-    // 初始化单例
-    [DeviceSpoofer shared];
-    
-    NSLog(@"[DeviceSpoofer] All hooks installed successfully");
-}
+@end
