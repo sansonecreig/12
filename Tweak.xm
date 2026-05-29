@@ -1,6 +1,6 @@
 #import "DeviceSpoofer.h"
+#import "NetworkInterceptor.h"
 
-// Floating Window
 @interface FloatingWindow : UIWindow
 + (instancetype)shared;
 - (void)showDeviceMenu;
@@ -164,7 +164,6 @@ static void appDidFinishLaunching(CFNotificationCenterRef center, void *observer
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0), ^{
         [DeviceSpoofer shared];
     });
-    
     CFNotificationCenterAddObserver(CFNotificationCenterGetLocalCenter(), NULL,
                                     appDidFinishLaunching,
                                     (CFStringRef)UIApplicationDidFinishLaunchingNotification,

@@ -1,8 +1,8 @@
 Package: com.matrix.aegis.lite
 Name: Matrix Aegis Lite
-Version: 1.0.0
+Version: 1.0.1
 Architecture: iphoneos-arm
-Description: Device spoofer & Keychain isolator (lite)
+Description: Device spoofer & Keychain isolator (lightweight)
 Maintainer: MatrixTeam
 Author: MatrixTeam
 Section: Tweaks
