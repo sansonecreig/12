@@ -8,7 +8,7 @@
 #import <notify.h>
 #import <WebKit/WebKit.h>
 #import <Security/Security.h>
-#import "fishhook.h"
+#import <substrate.h>
 
 // ========== 辅助函数 ==========
 static NSString* randomString(int length) {
@@ -132,18 +132,17 @@ static void nukeEverything() {
         _fakeHardwareUUID = [defaults stringForKey:@"FakeHardwareUUID"] ?: generateRandomUUID();
         _shadowSuffix = [defaults stringForKey:@"ShadowDomainKey"] ?: [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
         [self saveFakeValues];
-        // Hook 延迟到 startHooking 中执行，避免 dyld 未就绪时崩溃
     }
     return self;
 }
 
-// 延迟启动 Hook，确保 dyld 已处理完所有 image
+// 延迟启动 Hook，确保 App 已完全启动
 - (void)startHooking {
     static dispatch_once_t onceToken;
     dispatch_once(&onceToken, ^{
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
             [self installHooks];
-            NSLog(@"[DeviceSpoofer] Hooks installed after delay");
+            NSLog(@"[DeviceSpoofer] Hooks installed (using MSHookFunction)");
         });
     });
 }
@@ -244,13 +243,13 @@ static void nukeEverything() {
     _fakeHardwareUUID = generateRandomUUID();
     _shadowSuffix = [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
     [self saveFakeValues];
-    
+
     // 终极清理所有残留数据
     nukeEverything();
-    
+
     // 发送通知，刷新Hook中的缓存
     notify_post("com.matrix.device.spoofing.changed");
-    
+
     if (completion) completion(YES);
 }
 
@@ -269,7 +268,7 @@ static void nukeEverything() {
 - (NSString *)fakeMLBSerial { return _fakeMLBSerial; }
 - (NSString *)fakeHardwareUUID { return _fakeHardwareUUID; }
 
-// ========== 原始函数指针 ==========
+// ========== 原始函数指针（使用 Substrate MSHookFunction） ==========
 static int (*orig_sysctl)(int *, u_int, void *, size_t *, void *, size_t);
 static CFTypeRef (*orig_IORegistryEntryCreateCFProperty)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t);
 static void* (*orig_MGCopyAnswer)(CFStringRef);
@@ -278,7 +277,7 @@ static void* (*orig_MGCopyAnswer)(CFStringRef);
 static int custom_sysctl(int *name, u_int namelen, void *oldp, size_t *oldlenp, void *newp, size_t newlen) {
     int ret = orig_sysctl(name, namelen, oldp, oldlenp, newp, newlen);
     if (ret != 0 || namelen < 2 || name[0] != CTL_HW) return ret;
-    
+
     DeviceSpoofer *spoofer = [DeviceSpoofer shared];
     if (name[1] == HW_MACHINE || name[1] == HW_MODEL) {
         NSString *fake = [spoofer fakeMachine];
@@ -364,31 +363,32 @@ static void hookIDFA() {
     else class_addMethod(uiDevice, sel2, newImp2, "@@:");
 }
 
-// ========== 安装所有 Hook（使用 fishhook） ==========
+// ========== 安装所有 Hook（使用 Cydia Substrate MSHookFunction） ==========
 - (void)installHooks {
-    // 1. sysctl
-    struct rebinding sysctl_bind = {"sysctl", (void *)custom_sysctl, (void **)&orig_sysctl};
-    rebind_symbols(&sysctl_bind, 1);
-    
-    // 2. IOKit
+    // 1. Hook sysctl
+    MSHookFunction((void *)sysctl, (void *)custom_sysctl, (void **)&orig_sysctl);
+
+    // 2. Hook IORegistryEntryCreateCFProperty
     void *ioKit = dlopen("/System/Library/Frameworks/IOKit.framework/IOKit", RTLD_LAZY);
     if (ioKit) {
-        orig_IORegistryEntryCreateCFProperty = (CFTypeRef (*)(mach_port_t, CFStringRef, CFAllocatorRef, uint32_t))dlsym(ioKit, "IORegistryEntryCreateCFProperty");
-        struct rebinding io_bind = {"IORegistryEntryCreateCFProperty", (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty};
-        rebind_symbols(&io_bind, 1);
+        void *func = dlsym(ioKit, "IORegistryEntryCreateCFProperty");
+        if (func) {
+            MSHookFunction(func, (void *)custom_IORegistryEntryCreateCFProperty, (void **)&orig_IORegistryEntryCreateCFProperty);
+        }
         dlclose(ioKit);
     }
-    
-    // 3. MGCopyAnswer
+
+    // 3. Hook MGCopyAnswer
     void *lib = dlopen("/usr/lib/libMobileGestalt.dylib", RTLD_LAZY);
     if (lib) {
-        orig_MGCopyAnswer = (void* (*)(CFStringRef))dlsym(lib, "MGCopyAnswer");
-        struct rebinding mg_bind = {"MGCopyAnswer", (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer};
-        rebind_symbols(&mg_bind, 1);
+        void *func = dlsym(lib, "MGCopyAnswer");
+        if (func) {
+            MSHookFunction(func, (void *)custom_MGCopyAnswer, (void **)&orig_MGCopyAnswer);
+        }
         dlclose(lib);
     }
-    
-    // 4. IDFA / IDFV
+
+    // 4. Hook IDFA / IDFV
     hookIDFA();
 }
 @end
