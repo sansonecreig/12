@@ -1,8 +1,8 @@
-Package: com.matrix.aegis
-Name: Matrix Nebula Aegis
-Version: 4.0.0
+Package: com.matrix.aegis.lite
+Name: Matrix Aegis Lite
+Version: 1.0.0
 Architecture: iphoneos-arm
-Description: Advanced iOS debug framework
+Description: Device spoofer & Keychain isolator (lite)
 Maintainer: MatrixTeam
 Author: MatrixTeam
 Section: Tweaks
