@@ -4,27 +4,34 @@
 
 static IMP original_viewDidLoad = NULL;
 
+// Forward declaration
+static UIButton *findCloseButtonInView(UIView *view);
+
 static void new_viewDidLoad(id self, SEL _cmd) {
     ((void(*)(id,SEL))original_viewDidLoad)(self, _cmd);
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 0.5 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
-        UIButton *closeBtn = [AdSkipInterceptor findCloseButtonInView:(UIView *)self];
+        UIButton *closeBtn = findCloseButtonInView((UIView *)self);
         if (closeBtn) [closeBtn sendActionsForControlEvents:UIControlEventTouchUpInside];
     });
 }
 
-@implementation AdSkipInterceptor
-
-+ (UIButton *)findCloseButtonInView:(UIView *)view {
+static UIButton *findCloseButtonInView(UIView *view) {
     for (UIView *sub in view.subviews) {
         if ([sub isKindOfClass:[UIButton class]]) {
             UIButton *btn = (UIButton *)sub;
             NSString *title = [btn titleForState:UIControlStateNormal];
             if ([title containsString:@"关闭"] || [title containsString:@"X"] || [title containsString:@"Close"]) return btn;
         }
-        UIButton *found = [self findCloseButtonInView:sub];
+        UIButton *found = findCloseButtonInView(sub);
         if (found) return found;
     }
     return nil;
+}
+
+@implementation AdSkipInterceptor
+
++ (UIButton *)findCloseButtonInView:(UIView *)view {
+    return findCloseButtonInView(view);
 }
 
 + (void)startIntercepting {
