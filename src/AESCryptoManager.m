@@ -14,7 +14,12 @@ static NSString *const kAESKeychainAccount = @"masterKey";
     if (status == errSecSuccess) return (__bridge NSData *)result;
     
     NSMutableData *newKey = [NSMutableData dataWithLength:kCCKeySizeAES256];
-    SecRandomCopyBytes(kSecRandomDefault, newKey.length, newKey.mutableBytes);
+    int keyStatus = SecRandomCopyBytes(kSecRandomDefault, newKey.length, newKey.mutableBytes);
+    if (keyStatus != errSecSuccess) {
+        NSLog(@"[MatrixNebulaAegis] Error: Failed to generate random Key, status: %d", keyStatus);
+        return nil;
+    }
+    
     NSDictionary *add = @{(id)kSecClass: (id)kSecClassGenericPassword, (id)kSecAttrService: kAESKeychainService, (id)kSecAttrAccount: kAESKeychainAccount, (id)kSecValueData: newKey};
     SecItemAdd((__bridge CFDictionaryRef)add, NULL);
     return newKey;
@@ -23,8 +28,14 @@ static NSString *const kAESKeychainAccount = @"masterKey";
 + (NSData *)encryptData:(NSData *)plainData {
     if (!plainData) return nil;
     NSData *key = [self loadOrCreateKey];
+    if (!key) return nil;
+    
     NSMutableData *iv = [NSMutableData dataWithLength:kCCBlockSizeAES128];
-    SecRandomCopyBytes(kSecRandomDefault, iv.length, iv.mutableBytes);
+    int ivStatus = SecRandomCopyBytes(kSecRandomDefault, iv.length, iv.mutableBytes);
+    if (ivStatus != errSecSuccess) {
+        NSLog(@"[MatrixNebulaAegis] Error: Failed to generate random IV, status: %d", ivStatus);
+        return nil;
+    }
     
     size_t bufferSize = plainData.length + kCCBlockSizeAES128;
     NSMutableData *buffer = [NSMutableData dataWithLength:bufferSize];
@@ -47,6 +58,7 @@ static NSString *const kAESKeychainAccount = @"masterKey";
 + (NSData *)decryptData:(NSData *)cipherData {
     if (!cipherData || cipherData.length < kCCBlockSizeAES128) return nil;
     NSData *key = [self loadOrCreateKey];
+    if (!key) return nil;
     
     NSData *iv = [cipherData subdataWithRange:NSMakeRange(0, kCCBlockSizeAES128)];
     NSData *encrypted = [cipherData subdataWithRange:NSMakeRange(kCCBlockSizeAES128, cipherData.length - kCCBlockSizeAES128)];
