@@ -1,5 +1,42 @@
 #import "AdvancedMemAccess.h"
-#import <mach/mach_vm.h>
+#import <mach/mach.h>
+
+// Manually defining missing Mach VM types and functions (bypass SDK restriction)
+typedef mach_vm_address_t vm_map_offset_t;
+typedef mach_vm_size_t vm_map_size_t;
+
+extern kern_return_t mach_vm_read_overwrite(
+    vm_map_t target_task,
+    mach_vm_address_t address,
+    mach_vm_size_t size,
+    mach_vm_address_t data,
+    mach_vm_size_t *outsize
+);
+
+extern kern_return_t mach_vm_region(
+    vm_map_t target_task,
+    mach_vm_address_t *address,
+    mach_vm_size_t *size,
+    vm_region_flavor_t flavor,
+    vm_region_info_t info,
+    mach_msg_type_number_t *infoCnt,
+    mach_port_t *object_name
+);
+
+extern kern_return_t mach_vm_protect(
+    vm_map_t target_task,
+    mach_vm_address_t address,
+    mach_vm_size_t size,
+    boolean_t set_maximum,
+    vm_prot_t new_protection
+);
+
+extern kern_return_t mach_vm_write(
+    vm_map_t target_task,
+    mach_vm_address_t address,
+    vm_offset_t data,
+    mach_msg_type_number_t dataCnt
+);
 
 @interface AdvancedMemAccess () {
     dispatch_queue_t _accessQueue;
@@ -64,7 +101,7 @@
 - (BOOL)readBytes:(void *)buffer atAddress:(uint64_t)address size:(size_t)size {
     __block BOOL success = NO;
     dispatch_sync(_accessQueue, ^{
-        kern_return_t kr = mach_vm_read_overwrite(_targetTask, (mach_vm_address_t)address, size, (vm_offset_t)buffer, (mach_msg_type_number_t *)&size);
+        kern_return_t kr = mach_vm_read_overwrite(_targetTask, (mach_vm_address_t)address, size, (mach_vm_address_t)buffer, (mach_vm_size_t *)&size);
         success = (kr == KERN_SUCCESS);
     });
     return success;
@@ -75,7 +112,7 @@
     dispatch_sync(_accessQueue, ^{
         vm_prot_t originalProt = 0;
         mach_vm_address_t tmpAddr = address;
-        vm_size_t tmpSize = size;
+        mach_vm_size_t tmpSize = size;
         vm_region_basic_info_data_64_t info;
         mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
         kern_return_t kr = mach_vm_region(_targetTask, &tmpAddr, &tmpSize, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info, &infoCount, NULL);
