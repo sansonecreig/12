@@ -1,8 +1,23 @@
 #import "MemScanner.h"
-#import <mach/mach_vm.h>
+#include <stdatomic.h>
+#import <mach/mach.h>
 #import <os/lock.h>
 
 #define SCAN_PAGE_SIZE (1024 * 1024)
+
+// Manually bypass the SDK block for mach_vm_region
+typedef mach_vm_address_t vm_map_offset_t;
+typedef mach_vm_size_t vm_map_size_t;
+
+extern kern_return_t mach_vm_region(
+    vm_map_t target_task,
+    mach_vm_address_t *address,
+    mach_vm_size_t *size,
+    vm_region_flavor_t flavor,
+    vm_region_info_t info,
+    mach_msg_type_number_t *infoCnt,
+    mach_port_t *object_name
+);
 
 @interface MemScanner () {
     dispatch_queue_t _scanQueue;
@@ -88,7 +103,7 @@ static size_t sizeOfType(ScanValueType type) {
         
         if (previousAddresses == nil) {
             mach_vm_address_t addr = 0;
-            vm_size_t size = 0;
+            mach_vm_size_t size = 0;
             vm_region_basic_info_data_64_t info;
             mach_msg_type_number_t infoCount = VM_REGION_BASIC_INFO_COUNT_64;
             
