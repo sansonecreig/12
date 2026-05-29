@@ -27,6 +27,8 @@ static NSString* generateRandomMLBSerial() { return randomString(12); }
 static NSString* generateRandomUUID() { return [[NSUUID UUID] UUIDString]; }
 
 // ========== 数据清理函数 ==========
+
+// 清除 UserDefaults
 static void cleanUserDefaults() {
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     NSDictionary *dict = [defaults dictionaryRepresentation];
@@ -37,14 +39,20 @@ static void cleanUserDefaults() {
     [defaults synchronize];
 }
 
+// 清除 Keychain（包括同步标记）
 static void cleanKeychainDirectly() {
     NSArray *secClasses = @[(id)kSecClassGenericPassword, (id)kSecClassCertificate, (id)kSecClassIdentity, (id)kSecClassKey];
     for (id secClass in secClasses) {
-        NSDictionary *query = @{(id)kSecClass: secClass, (id)kSecMatchLimit: (id)kSecMatchLimitAll};
+        NSDictionary *query = @{
+            (id)kSecClass: secClass,
+            (id)kSecMatchLimit: (id)kSecMatchLimitAll,
+            (id)kSecAttrSynchronizable: (id)kSecAttrSynchronizableAny
+        };
         SecItemDelete((__bridge CFDictionaryRef)query);
     }
 }
 
+// 清除 WebKit 数据
 static void cleanWebKitData() {
     NSSet *types = [NSSet setWithArray:@[
         WKWebsiteDataTypeCookies, WKWebsiteDataTypeLocalStorage, WKWebsiteDataTypeIndexedDBDatabases,
@@ -53,6 +61,45 @@ static void cleanWebKitData() {
     [[WKWebsiteDataStore defaultDataStore] removeDataOfTypes:types modifiedSince:[NSDate distantPast] completionHandler:^{}];
     NSHTTPCookieStorage *cookieStorage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
     for (NSHTTPCookie *cookie in cookieStorage.cookies) [cookieStorage deleteCookie:cookie];
+}
+
+// 终极暴力清除：删除沙盒内所有数据
+static void nukeSandboxData() {
+    NSString *home = NSHomeDirectory();
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSArray *dirs = @[@"Documents", @"Library", @"tmp"];
+    for (NSString *dir in dirs) {
+        NSString *path = [home stringByAppendingPathComponent:dir];
+        if ([fm fileExistsAtPath:path]) {
+            [fm removeItemAtPath:path error:nil];
+            [fm createDirectoryAtPath:path withIntermediateDirectories:YES attributes:nil error:nil];
+        }
+    }
+}
+
+// 清除剪贴板
+static void cleanPasteboard() {
+    [[UIPasteboard generalPasteboard] setItems:@[]];
+    UIPasteboard *pb = [UIPasteboard pasteboardWithName:@"com.apple.UIKit.pasteboard" create:NO];
+    if (pb) [pb setItems:@[]];
+}
+
+// 清除推送令牌
+static void cleanPushToken() {
+    if ([[UIApplication sharedApplication] respondsToSelector:@selector(unregisterForRemoteNotifications)]) {
+        [[UIApplication sharedApplication] unregisterForRemoteNotifications];
+    }
+}
+
+// 一键终极清理
+static void nukeEverything() {
+    nukeSandboxData();
+    cleanUserDefaults();
+    cleanKeychainDirectly();
+    cleanWebKitData();
+    cleanPasteboard();
+    cleanPushToken();
+    NSLog(@"[DeviceSpoofer] Nuke everything completed");
 }
 
 // ========== DeviceSpoofer 类 ==========
@@ -187,10 +234,8 @@ static void cleanWebKitData() {
     _shadowSuffix = [NSString stringWithFormat:@"_NEBULA_%@", randomString(8)];
     [self saveFakeValues];
     
-    // 清理所有残留数据
-    cleanUserDefaults();
-    cleanKeychainDirectly();
-    cleanWebKitData();
+    // 终极清理所有残留数据
+    nukeEverything();
     
     // 发送通知，刷新Hook中的缓存
     notify_post("com.matrix.device.spoofing.changed");
