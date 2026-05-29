@@ -1,3 +1,4 @@
+#import <UIKit/UIKit.h>
 #import "DeviceSpoofer.h"
 #import "NetworkInterceptor.h"
 
@@ -26,6 +27,7 @@
 }
 
 - (void)setupUI {
+    // 悬浮红点
     _dot = [UIButton buttonWithType:UIButtonTypeCustom];
     _dot.frame = CGRectMake(20, 120, 44, 44);
     _dot.backgroundColor = [UIColor redColor];
@@ -36,6 +38,7 @@
     [_dot addGestureRecognizer:pan];
     [self addSubview:_dot];
     
+    // 主面板
     _panel = [[UIView alloc] initWithFrame:CGRectMake(10, 100, 260, 150)];
     _panel.backgroundColor = [[UIColor blackColor] colorWithAlphaComponent:0.9];
     _panel.layer.cornerRadius = 12;
@@ -65,6 +68,7 @@
     [closeBtn addTarget:self action:@selector(hidePanel) forControlEvents:UIControlEventTouchUpInside];
     [_panel addSubview:closeBtn];
     
+    // 双指双击全局呼出
     UITapGestureRecognizer *doubleTwo = [[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(togglePanel)];
     doubleTwo.numberOfTouchesRequired = 2;
     doubleTwo.numberOfTapsRequired = 2;
@@ -76,7 +80,9 @@
     if (!_panel.hidden) [self bringSubviewToFront:_panel];
 }
 
-- (void)hidePanel { _panel.hidden = YES; }
+- (void)hidePanel {
+    _panel.hidden = YES;
+}
 
 - (void)panDot:(UIPanGestureRecognizer *)g {
     CGPoint t = [g translationInView:self];
@@ -101,7 +107,7 @@
     }];
     
     UIAlertController *sheet = [UIAlertController alertControllerWithTitle:@"Matrix 拓扑中枢"
-                                                                   message:@"切换后自动洗机，需手动滑掉App冷启动"
+                                                                   message:@"切换后自动洗机(重置Keychain)，需手动滑掉App冷启动"
                                                             preferredStyle:UIAlertControllerStyleActionSheet];
     UIAlertAction *iphoneTitle = [UIAlertAction actionWithTitle:@"——— iPhone ———" style:UIAlertActionStyleDestructive handler:nil];
     iphoneTitle.enabled = NO;
@@ -157,6 +163,8 @@
 static void appDidFinishLaunching(CFNotificationCenterRef center, void *observer, CFStringRef name, const void *object, CFDictionaryRef userInfo) {
     dispatch_async(dispatch_get_main_queue(), ^{
         [[FloatingWindow shared] setHidden:NO];
+        // 如需网络拦截，取消下面一行注释
+        // [NetworkInterceptor startIntercepting];
     });
 }
 
